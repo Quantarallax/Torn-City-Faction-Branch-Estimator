@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.17
+// @version      1.0.18
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
 // @match        https://www.torn.com/factions.php*
-// @updateURL    https://github.com/Quantarallax/TBD/raw/refs/heads/main/Torn%20City%20Museum%20Next%20Destination.user.js
-// @downloadURL  https://github.com/Quantarallax/TBD/raw/refs/heads/main/Torn%20City%20Museum%20Next%20Destination.user.js
+// @updateURL    https://github.com/Quantarallax/Torn-City-Faction-Branch-Estimator/raw/refs/heads/main/TornCityFactionBranchEstimator.user.js
+// @downloadURL  https://github.com/Quantarallax/Torn-City-Faction-Branch-Estimator/raw/refs/heads/main/TornCityFactionBranchEstimator.user.js
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
