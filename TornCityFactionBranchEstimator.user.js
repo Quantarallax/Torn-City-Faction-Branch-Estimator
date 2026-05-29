@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.19
+// @version      1.0.21
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -155,6 +155,22 @@
         var mm = String(d.getUTCMonth() + 1).padStart(2, '0');
         var yyyy = d.getUTCFullYear();
         return dd + '-' + mm + '-' + yyyy;
+    }
+
+    function formatTimeAgo(timestampSec) {
+        if (!timestampSec) {
+            return '—';
+        }
+        var now = Math.floor(Date.now() / 1000);
+        var diff = now - timestampSec;
+        if (diff < 0) {
+            return 'in the future';
+        }
+        var days = Math.floor(diff / 86400);
+        if (days === 1) {
+            return '1 day ago';
+        }
+        return days + ' days ago';
     }
 
     function maskKey(key) {
@@ -887,23 +903,62 @@
         if (!Array.isArray(history) || history.length === 0) {
             return '<div class="fbe-sub" style="padding:8px 0">No snapshots stored yet. Load a TSV or run the estimate periodically to build history.</div>';
         }
-        var html = ['<div class="fbe-sub" style="margin-top:6px">Showing ' + history.length + ' snapshot(s), oldest first.</div>'];
+
+        // Group snapshots by UTC calendar date; keep the latest snapshot's
+        // respect value as that day's end-of-day total.
+        var byDate = {};
+        history.forEach(function (s) {
+            if (!s || typeof s.t !== 'number') {
+                return;
+            }
+            var d = new Date(s.t * 1000);
+            var dateKey = d.getUTCFullYear() + '-' +
+                          String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                          String(d.getUTCDate()).padStart(2, '0');
+            if (!byDate[dateKey] || byDate[dateKey].t < s.t) {
+                byDate[dateKey] = {
+                    t: s.t,
+                    r: s.r,
+                    dateKey: dateKey,
+                    year: d.getUTCFullYear(),
+                    month: d.getUTCMonth(),
+                    day: d.getUTCDate()
+                };
+            }
+        });
+
+        // Ascending order to compute each day's gain against the previous day,
+        // then reverse for display (newest first).
+        var sortedAsc = Object.keys(byDate).sort().map(function (k) { return byDate[k]; });
+        sortedAsc.forEach(function (entry, idx) {
+            entry.gain = (idx === 0) ? null : (entry.r - sortedAsc[idx - 1].r);
+        });
+        var sortedDesc = sortedAsc.slice().reverse();
+
+        var totalDays = sortedDesc.length;
+        var totalGain = (sortedAsc.length >= 2) ? (sortedAsc[sortedAsc.length - 1].r - sortedAsc[0].r) : 0;
+
+        var html = ['<div class="fbe-sub" style="margin-top:6px">' +
+            'Showing ' + totalDays + ' day(s), newest first. ' +
+            'Aggregated total gain across all days: ' + formatNumber(totalGain) + ' respect.' +
+            '</div>'];
         html.push('<div class="fbe-tbl-wrap"><table class="fbe-tbl">');
-        html.push('<thead><tr><th class="num">#</th><th>Date (UTC)</th><th class="num">Respect</th><th class="num">Gain since previous</th></tr></thead><tbody>');
-        var prev = null;
-        history.forEach(function (s, idx) {
-            var gain = prev ? (s.r - prev.r) : 0;
+        html.push('<thead><tr><th>Date (UTC)</th><th>When</th><th class="num">Respect (end of day)</th><th class="num">Gain that day</th></tr></thead><tbody>');
+        sortedDesc.forEach(function (entry) {
+            var dateStr = String(entry.day).padStart(2, '0') + '-' +
+                          String(entry.month + 1).padStart(2, '0') + '-' +
+                          entry.year;
+            var when = formatTimeAgo(entry.t);
             var gainCell = '—';
-            if (prev) {
-                gainCell = (gain >= 0 ? '+' : '') + formatNumber(gain);
+            if (entry.gain !== null) {
+                gainCell = (entry.gain >= 0 ? '+' : '') + formatNumber(entry.gain);
             }
             html.push('<tr>' +
-                '<td class="num">' + (idx + 1) + '</td>' +
-                '<td>' + formatDateDMY(s.t) + '</td>' +
-                '<td class="num">' + formatNumber(s.r) + '</td>' +
+                '<td>' + dateStr + '</td>' +
+                '<td>' + when + '</td>' +
+                '<td class="num">' + formatNumber(entry.r) + '</td>' +
                 '<td class="num">' + gainCell + '</td>' +
                 '</tr>');
-            prev = s;
         });
         html.push('</tbody></table></div>');
         return html.join('');
@@ -1017,7 +1072,7 @@
             '<div id="fbe-results"></div>',
 
             '<h4>Historical respect snapshots</h4>',
-            '<div class="fbe-sub">Every stored snapshot used by the rate calculation. The newest gain column is the increase since the previous snapshot.</div>',
+            '<div class="fbe-sub">All stored snapshots, aggregated by UTC date (end-of-day respect) and shown newest first. The "When" column says how long ago that date was.</div>',
             '<div class="fbe-row">',
             '  <button id="fbe-toggle-history">' + (storageGet(STORAGE_SHOW_HISTORY, false) === true ? 'Hide history' : 'Show history') + '</button>',
             '</div>',
