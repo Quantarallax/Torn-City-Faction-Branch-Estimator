@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.23
+// @version      1.0.24
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -24,7 +24,7 @@
     var SCRIPT_NAME = 'TORN CITY Faction Unlock Branch Estimator';
     // SCRIPT_VERSION MUST always match the @version header at the top of the
     // file. The settings panel renders it as the displayed version line.
-    var SCRIPT_VERSION = '1.0.23';
+    var SCRIPT_VERSION = '1.0.24';
     var AUTHOR_NAME = 'Sanxion';
     var AUTHOR_ID = '2987640';
 
@@ -35,6 +35,13 @@
     var STORAGE_SHOW_CALC = 'fbe_show_calculation';
     var STORAGE_HISTORY_WINDOW = 'fbe_history_window_days';
     var STORAGE_SHOW_HISTORY = 'fbe_show_history';
+    var STORAGE_SCREENSHOT_MODE = 'fbe_screenshot_mode';
+
+    // Multiplier applied to every respect-related number while screenshot
+    // mode is active. Chosen to look natural but visibly off from the real
+    // numbers. Rounds to the nearest 10 so the obfuscated values still read
+    // as plausible respect totals.
+    var SCREENSHOT_FACTOR = 0.873;
 
     var HISTORY_CAP = 500;
 
@@ -235,6 +242,62 @@
             return false;
         });
         return found;
+    }
+
+    // Screenshot-mode obfuscation. Scales all respect-related numbers by a
+    // fixed factor and rounds to the nearest 10 so the displayed values look
+    // like real Torn respect totals but aren't the faction's actual figures.
+    function obfuscate(n) {
+        if (typeof n !== 'number' || !isFinite(n) || n === 0) {
+            return n;
+        }
+        return Math.round(n * SCREENSHOT_FACTOR / 10) * 10;
+    }
+
+    function applyScreenshotMode(factionData, history, treeEntries) {
+        var fd = factionData;
+        if (factionData) {
+            fd = {};
+            Object.keys(factionData).forEach(function (k) { fd[k] = factionData[k]; });
+            fd.name = 'Sample Faction';
+            if (typeof fd.respect === 'number') {
+                fd.respect = obfuscate(fd.respect);
+            }
+            if (factionData.upgrades) {
+                fd.upgrades = {};
+                Object.keys(factionData.upgrades).forEach(function (id) {
+                    var u = factionData.upgrades[id];
+                    if (!u || typeof u !== 'object') {
+                        fd.upgrades[id] = u;
+                        return;
+                    }
+                    var cu = {};
+                    Object.keys(u).forEach(function (k) { cu[k] = u[k]; });
+                    if (typeof cu.basecost === 'number') {
+                        cu.basecost = obfuscate(cu.basecost);
+                    }
+                    if (typeof cu.cost === 'number') {
+                        cu.cost = obfuscate(cu.cost);
+                    }
+                    fd.upgrades[id] = cu;
+                });
+            }
+        }
+
+        var fh = (history || []).map(function (s) {
+            return { t: s.t, r: obfuscate(s.r) };
+        });
+
+        var fte = (treeEntries || []).map(function (e) {
+            var ce = {};
+            Object.keys(e).forEach(function (k) { ce[k] = e[k]; });
+            if (typeof ce.basecost === 'number') {
+                ce.basecost = obfuscate(ce.basecost);
+            }
+            return ce;
+        });
+
+        return { factionData: fd, history: fh, treeEntries: fte };
     }
 
     // ---------- roman numeral / sub-tree parsing ----------
@@ -975,7 +1038,15 @@
             return;
         }
         var history = storageGet(STORAGE_HISTORY, []);
-        viewer.innerHTML = buildHistoryViewer(Array.isArray(history) ? history : []);
+        if (!Array.isArray(history)) {
+            history = [];
+        }
+        if (storageGet(STORAGE_SCREENSHOT_MODE, false) === true) {
+            history = history.map(function (s) {
+                return { t: s.t, r: obfuscate(s.r) };
+            });
+        }
+        viewer.innerHTML = buildHistoryViewer(history);
     }
 
     function injectStyles() {
@@ -1008,6 +1079,10 @@
             '#fbe-panel button { padding: 6px 12px; background: #2a2a2a; border: 1px solid #666; color: #fff; border-radius: 3px; cursor: pointer; margin-right: 6px; font-size: 12px; }',
             '#fbe-panel button:hover { background: #3a3a3a; border-color: #888; }',
             '#fbe-panel button:disabled { opacity: .55; cursor: default; }',
+            '#fbe-panel .fbe-screenshot-toggle { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 0 12px; padding: 3px 8px; background: #2a2a2a; border: 1px solid #555; color: #cfc; border-radius: 12px; cursor: pointer; font-size: 10px; font-family: Arial, sans-serif; font-weight: normal; letter-spacing: .5px; text-transform: none; vertical-align: middle; line-height: 1.2; }',
+            '#fbe-panel .fbe-screenshot-toggle:hover { background: #3a3a3a; border-color: #888; }',
+            '#fbe-panel .fbe-screenshot-toggle.screenshot-on { color: #fed; background: #3a2f15; border-color: #b80; }',
+            '#fbe-panel .fbe-screenshot-toggle.screenshot-on:hover { background: #4a3f25; }',
             '#fbe-panel .fbe-row { display: block; margin: 0 0 10px 0; }',
             '#fbe-panel .fbe-msg { padding: 6px 10px; border-radius: 3px; margin-top: 8px; font-size: 11px; line-height: 1.5; display: block; }',
             '#fbe-panel .fbe-msg.ok { background: #143; color: #dfd; border: 1px solid #275; }',
@@ -1051,12 +1126,13 @@
         var windowDays = storageGet(STORAGE_HISTORY_WINDOW, 0);
         var history = storageGet(STORAGE_HISTORY, []);
         var historyCount = Array.isArray(history) ? history.length : 0;
+        var screenshotMode = storageGet(STORAGE_SCREENSHOT_MODE, false) === true;
 
         wrap.innerHTML = [
             '<h3>' + SCRIPT_NAME + '</h3>',
             '<div class="fbe-sub">Version ' + SCRIPT_VERSION + '</div>',
 
-            '<h4>Estimator</h4>',
+            '<h4>Estimator <button id="fbe-screenshot-toggle" class="fbe-screenshot-toggle' + (screenshotMode ? ' screenshot-on' : '') + '" title="Toggle screenshot mode — replaces real respect figures with realistic but fake values for sharing screenshots">' + (screenshotMode ? '🟡 SCREENSHOT MODE' : '🟢 RUNNING') + '</button></h4>',
             '<div class="fbe-sub">For every special branch your faction has opened, the script reads the highest level reached per sub-tree from <code>faction.upgrades</code>, expands it to levels I..N using the canonical <code>v2/torn/factiontree</code> endpoint, and sums every level\'s respect cost. The v2 endpoint carries <code>name</code> + <code>cost</code> for every upgrade in the game and is treated as authoritative; <code>faction.upgrades.basecost</code> is the only fallback. The estimator then picks the N cheapest <i>locked</i> upgrades across all sub-trees and divides their total cost by your respect-per-day rate. Cost sources are colour-coded in the breakdown: green = v2 tree, red = unknown.</div>',
             '<div class="fbe-row">',
             '  <label class="fbe-sub" style="display:inline-block; margin-right:8px">Specialist upgrades still needed to open the next branch:</label>',
@@ -1172,6 +1248,27 @@
                 storageSet(STORAGE_SHOW_HISTORY, true);
             }
         });
+
+        var screenshotToggleBtn = panel.querySelector('#fbe-screenshot-toggle');
+        if (screenshotToggleBtn) {
+            screenshotToggleBtn.addEventListener('click', function () {
+                var nowOn = !(storageGet(STORAGE_SCREENSHOT_MODE, false) === true);
+                storageSet(STORAGE_SCREENSHOT_MODE, nowOn);
+                if (nowOn) {
+                    screenshotToggleBtn.textContent = '🟡 SCREENSHOT MODE';
+                    screenshotToggleBtn.classList.add('screenshot-on');
+                } else {
+                    screenshotToggleBtn.textContent = '🟢 RUNNING';
+                    screenshotToggleBtn.classList.remove('screenshot-on');
+                }
+                // Refresh both the estimator output and the history viewer so
+                // their numbers reflect the new mode immediately.
+                refreshHistoryViewer(panel);
+                if (storageGet(STORAGE_API_KEY, '')) {
+                    runEstimate(results, panel);
+                }
+            });
+        }
 
         // Populate viewer if it starts open.
         if (storageGet(STORAGE_SHOW_HISTORY, false) === true) {
@@ -1586,12 +1683,27 @@
     }
 
     function renderEstimate(resultsEl, factionData, treeRaw, treeSource, treeErr) {
+        // Always record the REAL respect value so our stored history never
+        // gets corrupted by screenshot-mode obfuscation.
+        var realRespect = (factionData && typeof factionData.respect !== 'undefined') ? factionData.respect : 0;
+        var realHistory = recordRespectSnapshot(realRespect);
+
+        var screenshotMode = storageGet(STORAGE_SCREENSHOT_MODE, false) === true;
+        var treeEntries = treeRaw ? flattenFactionTree(treeRaw) : [];
+
+        if (screenshotMode) {
+            var transformed = applyScreenshotMode(factionData, realHistory, treeEntries);
+            factionData = transformed.factionData;
+            realHistory = transformed.history;
+            treeEntries = transformed.treeEntries;
+        }
+
         var respect = (factionData && typeof factionData.respect !== 'undefined') ? factionData.respect : 0;
         var ageDays = (factionData && typeof factionData.age !== 'undefined') ? factionData.age : 0;
         var name = (factionData && factionData.name) ? factionData.name : '?';
         var upgrades = (factionData && factionData.upgrades) ? factionData.upgrades : {};
 
-        var history = recordRespectSnapshot(respect);
+        var history = realHistory;
         var windowDays = parseInt(storageGet(STORAGE_HISTORY_WINDOW, 0), 10);
         if (isNaN(windowDays) || windowDays < 0) {
             windowDays = 0;
@@ -1604,11 +1716,11 @@
             targetNeeded = 7;
         }
 
-        var treeEntries = treeRaw ? flattenFactionTree(treeRaw) : [];
-        var usedTree = treeEntries.length > 0;
+        var treeEntriesForRender = treeEntries;
+        var usedTree = treeEntriesForRender.length > 0;
         var branchRows;
         if (usedTree) {
-            branchRows = summariseBranchesFromTree(treeEntries, upgrades, targetNeeded);
+            branchRows = summariseBranchesFromTree(treeEntriesForRender, upgrades, targetNeeded);
         } else {
             branchRows = summariseBranchesFromUnlockedOnly(upgrades);
         }
