@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.18
+// @version      1.0.19
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -31,6 +31,8 @@
     var STORAGE_PANEL_OPEN = 'fbe_panel_open';
     var STORAGE_TARGET_NEEDED = 'fbe_target_specialists_needed';
     var STORAGE_SHOW_CALC = 'fbe_show_calculation';
+    var STORAGE_HISTORY_WINDOW = 'fbe_history_window_days';
+    var STORAGE_SHOW_HISTORY = 'fbe_show_history';
 
     var HISTORY_CAP = 500;
 
@@ -339,14 +341,35 @@
         return history;
     }
 
-    function calculateRespectRate(history, factionAgeDays, currentRespect) {
+    function calculateRespectRate(history, factionAgeDays, currentRespect, windowDays) {
         if (Array.isArray(history) && history.length >= 2) {
-            var oldest = history[0];
-            var newest = history[history.length - 1];
+            var filtered = history;
+            var windowApplied = false;
+            if (windowDays && windowDays > 0) {
+                var nowSec = Math.floor(Date.now() / 1000);
+                var cutoff = nowSec - (windowDays * 86400);
+                var inWindow = history.filter(function (s) { return s.t >= cutoff; });
+                if (inWindow.length >= 2) {
+                    filtered = inWindow;
+                    windowApplied = true;
+                }
+            }
+            var oldest = filtered[0];
+            var newest = filtered[filtered.length - 1];
             var dt = newest.t - oldest.t;
             var dr = newest.r - oldest.r;
             if (dt > 0 && dr > 0) {
-                return { rate: dr / dt, source: 'snapshots', span: dt, oldest: oldest, newest: newest };
+                return {
+                    rate: dr / dt,
+                    source: 'snapshots',
+                    span: dt,
+                    oldest: oldest,
+                    newest: newest,
+                    windowDays: windowDays || 0,
+                    windowApplied: windowApplied,
+                    snapshotsUsed: filtered.length,
+                    snapshotsTotal: history.length
+                };
             }
         }
         if (factionAgeDays && factionAgeDays > 0 && currentRespect > 0) {
@@ -860,6 +883,44 @@
     var cogEl = null;
     var statusEl = null;
 
+    function buildHistoryViewer(history) {
+        if (!Array.isArray(history) || history.length === 0) {
+            return '<div class="fbe-sub" style="padding:8px 0">No snapshots stored yet. Load a TSV or run the estimate periodically to build history.</div>';
+        }
+        var html = ['<div class="fbe-sub" style="margin-top:6px">Showing ' + history.length + ' snapshot(s), oldest first.</div>'];
+        html.push('<div class="fbe-tbl-wrap"><table class="fbe-tbl">');
+        html.push('<thead><tr><th class="num">#</th><th>Date (UTC)</th><th class="num">Respect</th><th class="num">Gain since previous</th></tr></thead><tbody>');
+        var prev = null;
+        history.forEach(function (s, idx) {
+            var gain = prev ? (s.r - prev.r) : 0;
+            var gainCell = '—';
+            if (prev) {
+                gainCell = (gain >= 0 ? '+' : '') + formatNumber(gain);
+            }
+            html.push('<tr>' +
+                '<td class="num">' + (idx + 1) + '</td>' +
+                '<td>' + formatDateDMY(s.t) + '</td>' +
+                '<td class="num">' + formatNumber(s.r) + '</td>' +
+                '<td class="num">' + gainCell + '</td>' +
+                '</tr>');
+            prev = s;
+        });
+        html.push('</tbody></table></div>');
+        return html.join('');
+    }
+
+    function refreshHistoryViewer(panel) {
+        if (!panel) {
+            return;
+        }
+        var viewer = panel.querySelector('#fbe-history-viewer');
+        if (!viewer) {
+            return;
+        }
+        var history = storageGet(STORAGE_HISTORY, []);
+        viewer.innerHTML = buildHistoryViewer(Array.isArray(history) ? history : []);
+    }
+
     function injectStyles() {
         if (document.getElementById('fbe-styles')) {
             return;
@@ -867,10 +928,10 @@
         var style = document.createElement('style');
         style.id = 'fbe-styles';
         style.textContent = [
-            '#fbe-cog-wrap { display: inline-flex; align-items: center; gap: 8px; margin: 4px 10px; font-family: Arial, sans-serif; vertical-align: middle; color: #eee; }',
-            '#fbe-cog-wrap .fbe-cog { cursor: pointer; font-size: 16px; color: #ccc; user-select: none; transition: transform .2s, color .2s; line-height: 1; }',
+            '#fbe-cog-wrap { display: inline-flex; align-items: center; gap: 8px; margin: 4px 10px; font-family: Arial, sans-serif; vertical-align: middle; color: #eee; line-height: 1; }',
+            '#fbe-cog-wrap .fbe-cog { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; color: #ccc; user-select: none; transition: transform .2s, color .2s; line-height: 1; height: 18px; }',
             '#fbe-cog-wrap .fbe-cog:hover { color: #fff; transform: rotate(35deg); }',
-            '#fbe-cog-wrap .fbe-status { font-size: 11px; color: #eee; }',
+            '#fbe-cog-wrap .fbe-status { display: inline-flex; align-items: center; font-size: 11px; color: #eee; line-height: 1; height: 18px; }',
             '#fbe-cog-wrap .fbe-status.ok { color: #8f8; }',
             '#fbe-cog-wrap .fbe-status.warn { color: #f99; }',
 
@@ -928,6 +989,7 @@
 
         var savedKey = storageGet(STORAGE_API_KEY, '');
         var targetNeeded = storageGet(STORAGE_TARGET_NEEDED, 7);
+        var windowDays = storageGet(STORAGE_HISTORY_WINDOW, 0);
         var history = storageGet(STORAGE_HISTORY, []);
         var historyCount = Array.isArray(history) ? history.length : 0;
 
@@ -942,6 +1004,10 @@
             '  <input type="number" id="fbe-target-needed" min="1" max="100" value="' + targetNeeded + '" />',
             '</div>',
             '<div class="fbe-row">',
+            '  <label class="fbe-sub" style="display:inline-block; margin-right:8px">Days of history to use for the respect rate (0 = use everything):</label>',
+            '  <input type="number" id="fbe-history-window" min="0" max="3650" value="' + windowDays + '" />',
+            '</div>',
+            '<div class="fbe-row">',
             '  <button id="fbe-run">Run estimate</button>',
             '  <button id="fbe-load-history">Load historical data file</button>',
             '  <button id="fbe-clear-history">Reset respect history</button>',
@@ -949,6 +1015,13 @@
             '</div>',
             '<div class="fbe-sub" id="fbe-history-status">Snapshots stored: ' + historyCount + '. Use Load historical data file for a tab-separated file with columns: Day, Date (DD-MM-YYYY), Respect Start, Respect End, Daily Accrued, Running Total, Comment.</div>',
             '<div id="fbe-results"></div>',
+
+            '<h4>Historical respect snapshots</h4>',
+            '<div class="fbe-sub">Every stored snapshot used by the rate calculation. The newest gain column is the increase since the previous snapshot.</div>',
+            '<div class="fbe-row">',
+            '  <button id="fbe-toggle-history">' + (storageGet(STORAGE_SHOW_HISTORY, false) === true ? 'Hide history' : 'Show history') + '</button>',
+            '</div>',
+            '<div id="fbe-history-viewer" style="display:' + (storageGet(STORAGE_SHOW_HISTORY, false) === true ? 'block' : 'none') + '"></div>',
 
             '<h4>API key</h4>',
             '<div class="fbe-sub">Requires a Torn API key with at minimum <b>Limited Access</b> permissions (a Public key is not sufficient — faction data is gated). The key is stored locally in your browser via the Tampermonkey storage for this script only. It is never sent anywhere except <code>api.torn.com</code> and is not shared with the script author or any third party. The key is used to (1) verify the key is valid by reading your User basic info, (2) read your faction\'s current respect and age, (3) read the canonical respect cost ladder via <code>v2/torn/factiontree</code>, (4) read your faction\'s currently unlocked upgrades, and (5) record periodic respect snapshots locally so a real rate (rather than a lifetime average) can be calculated.</div>',
@@ -996,6 +1069,9 @@
         var currentKeyEl = panel.querySelector('#fbe-current-key');
         var results = panel.querySelector('#fbe-results');
         var targetInput = panel.querySelector('#fbe-target-needed');
+        var historyWindowInput = panel.querySelector('#fbe-history-window');
+        var toggleHistoryBtn = panel.querySelector('#fbe-toggle-history');
+        var historyViewer = panel.querySelector('#fbe-history-viewer');
 
         function showApiMsg(text, cls) {
             apiMsg.innerHTML = '<div class="fbe-msg ' + (cls || 'ok') + '">' + text + '</div>';
@@ -1011,6 +1087,37 @@
             }
             storageSet(STORAGE_TARGET_NEEDED, v);
         });
+
+        historyWindowInput.addEventListener('change', function () {
+            var v = parseInt(historyWindowInput.value, 10);
+            if (isNaN(v) || v < 0) {
+                v = 0;
+            }
+            storageSet(STORAGE_HISTORY_WINDOW, v);
+            // Re-render the estimate so the rate updates with the new window.
+            if (storageGet(STORAGE_API_KEY, '')) {
+                runEstimate(results, panel);
+            }
+        });
+
+        toggleHistoryBtn.addEventListener('click', function () {
+            var visible = historyViewer.style.display !== 'none';
+            if (visible) {
+                historyViewer.style.display = 'none';
+                toggleHistoryBtn.textContent = 'Show history';
+                storageSet(STORAGE_SHOW_HISTORY, false);
+            } else {
+                refreshHistoryViewer(panel);
+                historyViewer.style.display = 'block';
+                toggleHistoryBtn.textContent = 'Hide history';
+                storageSet(STORAGE_SHOW_HISTORY, true);
+            }
+        });
+
+        // Populate viewer if it starts open.
+        if (storageGet(STORAGE_SHOW_HISTORY, false) === true) {
+            refreshHistoryViewer(panel);
+        }
 
         saveBtn.addEventListener('click', function () {
             var key = (apiInput.value || '').trim();
@@ -1047,6 +1154,7 @@
         clearBtn.addEventListener('click', function () {
             storageSet(STORAGE_HISTORY, []);
             refreshHistoryStatus(panel);
+            refreshHistoryViewer(panel);
             showResultsMsg('Respect history cleared. The next run will start a fresh rate baseline.', 'ok');
         });
 
@@ -1075,6 +1183,7 @@
                     var merged = mergeSnapshots(existing, parsed.snapshots);
                     storageSet(STORAGE_HISTORY, merged);
                     refreshHistoryStatus(panel);
+                    refreshHistoryViewer(panel);
                     var firstNew = parsed.snapshots[0];
                     var lastNew = parsed.snapshots[parsed.snapshots.length - 1];
                     showResultsMsg(
@@ -1151,6 +1260,7 @@
                 renderEstimate(resultsEl, factionData, treeRaw, treeSource, treeErr);
                 if (panel) {
                     refreshHistoryStatus(panel);
+                    refreshHistoryViewer(panel);
                 }
             } catch (e) {
                 console.error(LOG_TAG, 'renderEstimate failed', e);
@@ -1423,7 +1533,11 @@
         var upgrades = (factionData && factionData.upgrades) ? factionData.upgrades : {};
 
         var history = recordRespectSnapshot(respect);
-        var rateInfo = calculateRespectRate(history, ageDays, respect);
+        var windowDays = parseInt(storageGet(STORAGE_HISTORY_WINDOW, 0), 10);
+        if (isNaN(windowDays) || windowDays < 0) {
+            windowDays = 0;
+        }
+        var rateInfo = calculateRespectRate(history, ageDays, respect, windowDays);
         var ratePerDay = rateInfo.rate * 86400;
 
         var targetNeeded = parseInt(storageGet(STORAGE_TARGET_NEEDED, 7), 10);
@@ -1452,7 +1566,11 @@
 
         var rateNote;
         if (rateInfo.source === 'snapshots') {
-            rateNote = ' (rolling, ' + formatDuration(rateInfo.span) + ' of history from ' + history.length + ' snapshot(s))';
+            var snapshotsNote = ' from ' + (rateInfo.snapshotsUsed || history.length) + ' snapshot(s)';
+            if (rateInfo.windowApplied) {
+                snapshotsNote += ' within the last ' + rateInfo.windowDays + ' day(s) of ' + (rateInfo.snapshotsTotal || history.length) + ' stored';
+            }
+            rateNote = ' (rolling, ' + formatDuration(rateInfo.span) + snapshotsNote + ')';
         } else if (rateInfo.source === 'lifetime') {
             rateNote = ' (lifetime average — upload a TSV or re-run later for a tighter rolling rate)';
         } else {
@@ -1475,6 +1593,29 @@
         html.push('<div class="fbe-line">Estimated respect/day: ' + formatNumber(ratePerDay) + rateNote + '</div>');
         if (usedTree) {
             html.push('<div class="fbe-line">Cost ladder: ' + (treeSource === 'v2' ? '<b style="color:#cfc">v2 factiontree (canonical)</b>' : 'v1 factiontree (no costs — faction.upgrades only)') + ', ' + treeEntries.length + ' tree entries loaded.</div>');
+        }
+
+        // Headline: best (shortest) time to open the next branch, across all
+        // special branches the faction has opened.
+        var bestRow = null;
+        specialRows.forEach(function (b) {
+            if (b.cheapestPickedCost > 0 && b.cheapestPicked.length > 0) {
+                if (!bestRow || b.cheapestPickedCost < bestRow.cheapestPickedCost) {
+                    bestRow = b;
+                }
+            }
+        });
+        if (bestRow && rateInfo.rate > 0) {
+            var bestDuration = formatDuration(bestRow.cheapestPickedCost / rateInfo.rate);
+            var bestDays = bestRow.cheapestPickedCost / (rateInfo.rate * 86400);
+            html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#1f2a1f; border:1px solid #275; border-radius:4px; color:#cfc; font-size:13px">' +
+                '<b>Next branch unlocks in ' + bestDuration + '</b> ' +
+                '(' + formatNumber(Math.ceil(bestDays)) + ' days at the current rate — cheapest ' + targetNeeded + ' upgrades in ' + escapeHtml(bestRow.branch) + ', costing ' + formatNumber(bestRow.cheapestPickedCost) + ' respect).' +
+                '</div>');
+        } else if (specialRows.length > 0 && rateInfo.rate <= 0) {
+            html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#432; border:1px solid #864; border-radius:4px; color:#fed; font-size:12px">' +
+                'Need a respect rate before an unlock time can be shown. Load a TSV history file or re-run the estimate after some time passes.' +
+                '</div>');
         }
 
         html.push(renderCoreSummary(coreRow));
@@ -1669,11 +1810,34 @@
 
         cogEl.addEventListener('click', function () {
             var visible = panelEl.style.display !== 'none';
-            panelEl.style.display = visible ? 'none' : 'block';
-            storageSet(STORAGE_PANEL_OPEN, !visible);
+            if (visible) {
+                panelEl.style.display = 'none';
+                storageSet(STORAGE_PANEL_OPEN, false);
+            } else {
+                panelEl.style.display = 'block';
+                storageSet(STORAGE_PANEL_OPEN, true);
+                // Show current values immediately on open (spec: "Show current
+                // values on main page"). Only auto-run when a key is stored.
+                if (storageGet(STORAGE_API_KEY, '')) {
+                    var resultsEl = panelEl.querySelector('#fbe-results');
+                    if (resultsEl) {
+                        runEstimate(resultsEl, panelEl);
+                    }
+                }
+            }
         });
 
         updateHeaderStatus();
+
+        // If the panel persisted as open across a page reload, render current
+        // values immediately rather than waiting for the user to click cog.
+        if (panelEl.style.display !== 'none' && storageGet(STORAGE_API_KEY, '')) {
+            var initResults = panelEl.querySelector('#fbe-results');
+            if (initResults) {
+                runEstimate(initResults, panelEl);
+            }
+        }
+
         return true;
     }
 
