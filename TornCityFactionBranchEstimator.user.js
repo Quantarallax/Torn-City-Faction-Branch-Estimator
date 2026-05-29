@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.21
+// @version      1.0.22
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -986,7 +986,8 @@
             '#fbe-cog-wrap { display: inline-flex; align-items: center; gap: 8px; margin: 4px 10px; font-family: Arial, sans-serif; vertical-align: middle; color: #eee; line-height: 1; }',
             '#fbe-cog-wrap .fbe-cog { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; color: #ccc; user-select: none; transition: transform .2s, color .2s; line-height: 1; height: 18px; }',
             '#fbe-cog-wrap .fbe-cog:hover { color: #fff; transform: rotate(35deg); }',
-            '#fbe-cog-wrap .fbe-status { display: inline-flex; align-items: center; font-size: 11px; color: #eee; line-height: 1; height: 18px; }',
+            '#fbe-cog-wrap .fbe-status { display: inline-flex; align-items: center; font-size: 11px; color: #eee; line-height: 1; height: 18px; cursor: pointer; user-select: none; transition: color .2s; }',
+            '#fbe-cog-wrap .fbe-status:hover { color: #fff; }',
             '#fbe-cog-wrap .fbe-status.ok { color: #8f8; }',
             '#fbe-cog-wrap .fbe-status.warn { color: #f99; }',
 
@@ -1844,8 +1845,8 @@
 
         var cogWrap = document.createElement('span');
         cogWrap.id = 'fbe-cog-wrap';
-        cogWrap.innerHTML = '<span class="fbe-cog" title="' + SCRIPT_NAME + ' settings">⚙</span>' +
-                            '<span class="fbe-status">…</span>';
+        cogWrap.innerHTML = '<span class="fbe-cog" title="' + SCRIPT_NAME + ' — click to open/close">⚙</span>' +
+                            '<span class="fbe-status" title="' + SCRIPT_NAME + ' — click to open/close">…</span>';
         cogEl = cogWrap.querySelector('.fbe-cog');
         statusEl = cogWrap.querySelector('.fbe-status');
 
@@ -1863,7 +1864,7 @@
         host.appendChild(panelEl);
         bindPanel(panelEl);
 
-        cogEl.addEventListener('click', function () {
+        function togglePanel() {
             var visible = panelEl.style.display !== 'none';
             if (visible) {
                 panelEl.style.display = 'none';
@@ -1880,7 +1881,10 @@
                     }
                 }
             }
-        });
+        }
+
+        cogEl.addEventListener('click', togglePanel);
+        statusEl.addEventListener('click', togglePanel);
 
         updateHeaderStatus();
 
