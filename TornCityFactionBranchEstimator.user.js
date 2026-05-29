@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.22
+// @version      1.0.23
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -22,7 +22,9 @@
     // ---------- constants ----------
     var LOG_TAG = '[FactionBranchEstimator]';
     var SCRIPT_NAME = 'TORN CITY Faction Unlock Branch Estimator';
-    var SCRIPT_VERSION = '1.0.17';
+    // SCRIPT_VERSION MUST always match the @version header at the top of the
+    // file. The settings panel renders it as the displayed version line.
+    var SCRIPT_VERSION = '1.0.23';
     var AUTHOR_NAME = 'Sanxion';
     var AUTHOR_ID = '2987640';
 
@@ -983,7 +985,8 @@
         var style = document.createElement('style');
         style.id = 'fbe-styles';
         style.textContent = [
-            '#fbe-cog-wrap { display: inline-flex; align-items: center; gap: 8px; margin: 4px 10px; font-family: Arial, sans-serif; vertical-align: middle; color: #eee; line-height: 1; }',
+            '#fbe-cog-wrap { display: inline-flex; align-items: center; gap: 8px; margin: 4px 10px; font-family: Arial, sans-serif; vertical-align: middle; color: #eee; line-height: 1; position: relative; z-index: 9999; pointer-events: auto; cursor: pointer; }',
+            '#fbe-cog-wrap * { pointer-events: auto; }',
             '#fbe-cog-wrap .fbe-cog { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; color: #ccc; user-select: none; transition: transform .2s, color .2s; line-height: 1; height: 18px; }',
             '#fbe-cog-wrap .fbe-cog:hover { color: #fff; transform: rotate(35deg); }',
             '#fbe-cog-wrap .fbe-status { display: inline-flex; align-items: center; font-size: 11px; color: #eee; line-height: 1; height: 18px; cursor: pointer; user-select: none; transition: color .2s; }',
@@ -1883,8 +1886,26 @@
             }
         }
 
-        cogEl.addEventListener('click', togglePanel);
-        statusEl.addEventListener('click', togglePanel);
+        // Attach the toggle to the WRAPPER using the capture phase so the
+        // event is handled before Torn's nav-bar SPA handlers can swallow it.
+        // Stopping propagation/default further prevents Torn from acting on
+        // the click as if the user had clicked a sibling nav link.
+        function handleToggleEvent(e) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === 'function') {
+                    e.stopImmediatePropagation();
+                }
+            }
+            togglePanel();
+        }
+        cogWrap.addEventListener('click', handleToggleEvent, true);
+        cogWrap.addEventListener('mousedown', function (e) {
+            // Prevent Torn's mousedown handlers (which sometimes pre-empt
+            // click events on nav-bar areas) from blocking ours.
+            e.stopPropagation();
+        }, true);
 
         updateHeaderStatus();
 
