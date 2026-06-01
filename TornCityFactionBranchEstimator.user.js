@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.24
+// @version      1.0.25
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -24,7 +24,7 @@
     var SCRIPT_NAME = 'TORN CITY Faction Unlock Branch Estimator';
     // SCRIPT_VERSION MUST always match the @version header at the top of the
     // file. The settings panel renders it as the displayed version line.
-    var SCRIPT_VERSION = '1.0.24';
+    var SCRIPT_VERSION = '1.0.25';
     var AUTHOR_NAME = 'Sanxion';
     var AUTHOR_ID = '2987640';
 
@@ -1611,13 +1611,25 @@
 
         parts.push('<h5>Respect rate</h5>');
         if (rateInfo.source === 'snapshots' && history.length >= 2) {
-            var first = history[0];
-            var last = history[history.length - 1];
-            parts.push('<div class="fbe-line">Source: ' + history.length + ' stored snapshot(s) (combined from any uploaded TSV plus live API recordings).</div>');
-            parts.push('<div class="fbe-line">Earliest snapshot: ' + formatDateDMY(first.t) + ' → ' + formatNumber(first.r) + ' respect.</div>');
-            parts.push('<div class="fbe-line">Latest snapshot: ' + formatDateDMY(last.t) + ' → ' + formatNumber(last.r) + ' respect.</div>');
-            parts.push('<div class="fbe-line">Gained ' + formatNumber(last.r - first.r) + ' respect over ' + formatDuration(last.t - first.t) + '.</div>');
-            parts.push('<div class="fbe-line">Rate = ' + formatNumber(last.r - first.r) + ' ÷ ' + formatNumber((last.t - first.t) / 86400) + ' days = <b>' + formatNumber(rateInfo.rate * 86400) + ' respect / day</b>.</div>');
+            // Use the boundaries of the actual snapshots that fed the rate
+            // calculation. When a history window is set, these are the
+            // windowed boundaries, not the global first/last snapshot.
+            var first = rateInfo.oldest || history[0];
+            var last = rateInfo.newest || history[history.length - 1];
+            var spanSec = last.t - first.t;
+            var spanDays = spanSec / 86400;
+            var sourceLine = 'Source: ' + (rateInfo.snapshotsUsed || history.length) + ' snapshot(s)';
+            if (rateInfo.windowApplied) {
+                sourceLine += ' within the last ' + rateInfo.windowDays + ' day(s) (of ' + (rateInfo.snapshotsTotal || history.length) + ' stored)';
+            } else {
+                sourceLine += ' (full stored history)';
+            }
+            sourceLine += '.';
+            parts.push('<div class="fbe-line">' + sourceLine + '</div>');
+            parts.push('<div class="fbe-line">Earliest snapshot used: ' + formatDateDMY(first.t) + ' → ' + formatNumber(first.r) + ' respect.</div>');
+            parts.push('<div class="fbe-line">Latest snapshot used: ' + formatDateDMY(last.t) + ' → ' + formatNumber(last.r) + ' respect.</div>');
+            parts.push('<div class="fbe-line">Gained ' + formatNumber(last.r - first.r) + ' respect over ' + formatDuration(spanSec) + '.</div>');
+            parts.push('<div class="fbe-line">Rate = ' + formatNumber(last.r - first.r) + ' ÷ ' + formatNumber(spanDays) + ' days = <b>' + formatNumber(rateInfo.rate * 86400) + ' respect / day</b>.</div>');
         } else if (rateInfo.source === 'lifetime') {
             var totalResp = rateInfo.rate * rateInfo.span;
             var ageDays = rateInfo.span / 86400;
