@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.25
+// @version      1.0.26
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -24,7 +24,7 @@
     var SCRIPT_NAME = 'TORN CITY Faction Unlock Branch Estimator';
     // SCRIPT_VERSION MUST always match the @version header at the top of the
     // file. The settings panel renders it as the displayed version line.
-    var SCRIPT_VERSION = '1.0.25';
+    var SCRIPT_VERSION = '1.0.26';
     var AUTHOR_NAME = 'Sanxion';
     var AUTHOR_ID = '2987640';
 
@@ -1170,7 +1170,11 @@
             '</div>',
             '<div id="fbe-api-msg"></div>',
 
-            '<div class="fbe-credit">Written by <a href="https://www.torn.com/profiles.php?XID=' + AUTHOR_ID + '" target="_blank" rel="noopener">' + AUTHOR_NAME + ' [' + AUTHOR_ID + ']</a></div>'
+            '<div class="fbe-credit">',
+            '  <div>Written by <a href="https://www.torn.com/profiles.php?XID=' + AUTHOR_ID + '" target="_blank" rel="noopener">' + AUTHOR_NAME + ' [' + AUTHOR_ID + ']</a></div>',
+            '  <div><a href="https://greasyfork.org/en/users/1593713-quantarallax?sort=total_installs" target="_blank" rel="noopener">Sanxion\'s Other Scripts</a></div>',
+            '  <div><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16569032&b=0&a=0&start=0&to=0" target="_blank" rel="noopener">Forum link: Bugs, feedback and LIKES welcome!</a></div>',
+            '</div>'
         ].join('');
 
         return wrap;
