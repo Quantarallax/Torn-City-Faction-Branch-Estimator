@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Faction Unlock Branch Estimator
 // @namespace    sanxion.tc.factionbranchestimator
-// @version      1.0.26
+// @version      1.0.27
 // @description  Estimates how long your faction will take to bank enough respect to unlock the next special branch. Respect costs are read from the canonical Torn v2 factiontree endpoint (which carries name + cost for every upgrade); faction.upgrades is used as a name-only fallback for any entry the v2 tree doesn't cover.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/factions.php?step=your&type=7#/tab=upgrades
@@ -24,7 +24,7 @@
     var SCRIPT_NAME = 'TORN CITY Faction Unlock Branch Estimator';
     // SCRIPT_VERSION MUST always match the @version header at the top of the
     // file. The settings panel renders it as the displayed version line.
-    var SCRIPT_VERSION = '1.0.26';
+    var SCRIPT_VERSION = '1.0.27';
     var AUTHOR_NAME = 'Sanxion';
     var AUTHOR_ID = '2987640';
 
@@ -1133,7 +1133,7 @@
             '<div class="fbe-sub">Version ' + SCRIPT_VERSION + '</div>',
 
             '<h4>Estimator <button id="fbe-screenshot-toggle" class="fbe-screenshot-toggle' + (screenshotMode ? ' screenshot-on' : '') + '" title="Toggle screenshot mode — replaces real respect figures with realistic but fake values for sharing screenshots">' + (screenshotMode ? '🟡 SCREENSHOT MODE' : '🟢 RUNNING') + '</button></h4>',
-            '<div class="fbe-sub">For every special branch your faction has opened, the script reads the highest level reached per sub-tree from <code>faction.upgrades</code>, expands it to levels I..N using the canonical <code>v2/torn/factiontree</code> endpoint, and sums every level\'s respect cost. The v2 endpoint carries <code>name</code> + <code>cost</code> for every upgrade in the game and is treated as authoritative; <code>faction.upgrades.basecost</code> is the only fallback. The estimator then picks the N cheapest <i>locked</i> upgrades across all sub-trees and divides their total cost by your respect-per-day rate. Cost sources are colour-coded in the breakdown: green = v2 tree, red = unknown.</div>',
+            '<div class="fbe-sub">For every special branch your faction has opened, the script reads the highest level reached per sub-tree from <code>faction.upgrades</code>, expands it to levels I..N using the canonical <code>v2/torn/factiontree</code> endpoint, and sums every level\'s respect cost. The v2 endpoint carries <code>name</code> + <code>cost</code> for every upgrade in the game and is treated as authoritative; <code>faction.upgrades.basecost</code> is the only fallback. The estimator then picks the N cheapest <i>locked</i> upgrades across all sub-trees, subtracts the faction\'s current unused respect balance from their total cost, and divides the remainder by your respect-per-day rate to get days-to-next-branch. Cost sources are colour-coded in the breakdown: green = v2 tree, red = unknown.</div>',
             '<div class="fbe-row">',
             '  <label class="fbe-sub" style="display:inline-block; margin-right:8px">Specialist upgrades still needed to open the next branch:</label>',
             '  <input type="number" id="fbe-target-needed" min="1" max="100" value="' + targetNeeded + '" />',
@@ -1610,7 +1610,7 @@
         return html.join('');
     }
 
-    function buildCalcBreakdown(history, rateInfo, branchRows, targetNeeded, usedTree, treeSource) {
+    function buildCalcBreakdown(history, rateInfo, branchRows, targetNeeded, usedTree, treeSource, currentRespect) {
         var parts = [];
 
         parts.push('<h5>Respect rate</h5>');
@@ -1684,9 +1684,14 @@
             parts.push('<h6>Cheapest ' + showN + ' locked upgrade(s) across all sub-trees — the path the estimate uses</h6>');
             parts.push(renderCheapestNTable(picked));
             parts.push('<div class="fbe-line">Sum of cheapest ' + showN + ' = <b>' + formatNumber(b.cheapestPickedCost) + ' respect</b>.</div>');
-            if (rateInfo.rate > 0) {
+            parts.push('<div class="fbe-line">Current faction respect already banked (available to spend): <b>' + formatNumber(currentRespect) + '</b>.</div>');
+            var remainingCostB = Math.max(0, b.cheapestPickedCost - currentRespect);
+            parts.push('<div class="fbe-line">Remaining respect still needed = max(0, ' + formatNumber(b.cheapestPickedCost) + ' − ' + formatNumber(currentRespect) + ') = <b>' + formatNumber(remainingCostB) + '</b>.</div>');
+            if (remainingCostB <= 0) {
+                parts.push('<div class="fbe-line" style="color:#cfc"><b>The faction already has enough respect banked to unlock the next branch in this tree right now.</b></div>');
+            } else if (rateInfo.rate > 0) {
                 var dailyRate = rateInfo.rate * 86400;
-                parts.push('<div class="fbe-line">At ' + formatNumber(dailyRate) + ' respect / day: ' + formatNumber(b.cheapestPickedCost) + ' ÷ ' + formatNumber(dailyRate) + ' = <b>' + formatDuration(b.cheapestPickedCost / rateInfo.rate) + '</b>.</div>');
+                parts.push('<div class="fbe-line">At ' + formatNumber(dailyRate) + ' respect / day: ' + formatNumber(remainingCostB) + ' ÷ ' + formatNumber(dailyRate) + ' = <b>' + formatDuration(remainingCostB / rateInfo.rate) + '</b>.</div>');
             } else {
                 parts.push('<div class="fbe-line">Can\'t convert to time — no usable respect rate yet.</div>');
             }
@@ -1783,7 +1788,9 @@
         }
 
         // Headline: best (shortest) time to open the next branch, across all
-        // special branches the faction has opened.
+        // special branches the faction has opened. The faction's current
+        // unused respect counts toward the cost — only the remainder needs
+        // to be earned.
         var bestRow = null;
         specialRows.forEach(function (b) {
             if (b.cheapestPickedCost > 0 && b.cheapestPicked.length > 0) {
@@ -1792,13 +1799,25 @@
                 }
             }
         });
-        if (bestRow && rateInfo.rate > 0) {
-            var bestDuration = formatDuration(bestRow.cheapestPickedCost / rateInfo.rate);
-            var bestDays = bestRow.cheapestPickedCost / (rateInfo.rate * 86400);
-            html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#1f2a1f; border:1px solid #275; border-radius:4px; color:#cfc; font-size:13px">' +
-                '<b>Next branch unlocks in ' + bestDuration + '</b> ' +
-                '(' + formatNumber(Math.ceil(bestDays)) + ' days at the current rate — cheapest ' + targetNeeded + ' upgrades in ' + escapeHtml(bestRow.branch) + ', costing ' + formatNumber(bestRow.cheapestPickedCost) + ' respect).' +
-                '</div>');
+        if (bestRow) {
+            var bestRemaining = Math.max(0, bestRow.cheapestPickedCost - respect);
+            if (bestRemaining <= 0) {
+                html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#1f2a1f; border:1px solid #275; border-radius:4px; color:#cfc; font-size:13px">' +
+                    '<b>Next branch is unlockable right now.</b> ' +
+                    'Cheapest ' + targetNeeded + ' upgrades in ' + escapeHtml(bestRow.branch) + ' cost ' + formatNumber(bestRow.cheapestPickedCost) + ' respect and you already have ' + formatNumber(respect) + ' banked.' +
+                    '</div>');
+            } else if (rateInfo.rate > 0) {
+                var bestDuration = formatDuration(bestRemaining / rateInfo.rate);
+                var bestDays = bestRemaining / (rateInfo.rate * 86400);
+                html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#1f2a1f; border:1px solid #275; border-radius:4px; color:#cfc; font-size:13px">' +
+                    '<b>Next branch unlocks in ' + bestDuration + '</b> ' +
+                    '(' + formatNumber(Math.ceil(bestDays)) + ' days at the current rate — cheapest ' + targetNeeded + ' upgrades in ' + escapeHtml(bestRow.branch) + ' cost ' + formatNumber(bestRow.cheapestPickedCost) + ' respect; ' + formatNumber(respect) + ' already banked, so ' + formatNumber(bestRemaining) + ' respect still needed).' +
+                    '</div>');
+            } else {
+                html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#432; border:1px solid #864; border-radius:4px; color:#fed; font-size:12px">' +
+                    'Need a respect rate before an unlock time can be shown. Load a TSV history file or re-run the estimate after some time passes. Cheapest ' + targetNeeded + ' still needs ' + formatNumber(bestRemaining) + ' respect on top of the ' + formatNumber(respect) + ' already banked.' +
+                    '</div>');
+            }
         } else if (specialRows.length > 0 && rateInfo.rate <= 0) {
             html.push('<div class="fbe-line" style="margin-top:8px; padding:8px 12px; background:#432; border:1px solid #864; border-radius:4px; color:#fed; font-size:12px">' +
                 'Need a respect rate before an unlock time can be shown. Load a TSV history file or re-run the estimate after some time passes.' +
@@ -1841,7 +1860,15 @@
                             costStr += ' (only ' + b.cheapestPicked.length + ' priced)';
                         }
                     }
-                    var timeStr = (rateInfo.rate > 0 && b.cheapestPickedCost > 0) ? formatDuration(b.cheapestPickedCost / rateInfo.rate) : '—';
+                    var timeStr = '—';
+                    if (b.cheapestPickedCost > 0) {
+                        var remainingRespect = Math.max(0, b.cheapestPickedCost - respect);
+                        if (remainingRespect <= 0) {
+                            timeStr = '<span style="color:#cfc">now</span>';
+                        } else if (rateInfo.rate > 0) {
+                            timeStr = formatDuration(remainingRespect / rateInfo.rate);
+                        }
+                    }
                     var spentStr = formatNumber(b.spentSoFar);
                     if (b.unknownLevels > 0) {
                         spentStr += ' <span style="color:#f99">(+' + b.unknownLevels + ' unknown)</span>';
@@ -1871,6 +1898,7 @@
             html.push('<b>Unlocked / Total</b>: reconstructed level count vs total levels in the branch (e.g. Speed Training V means I..V all unlocked → counted as 5). ');
             html.push('<b>Spent so far</b>: sum of every reconstructed unlocked level\'s base cost, resolved against the v2 tree first, then faction.upgrades. ');
             html.push('<b>Cost of cheapest ' + targetNeeded + '</b>: sum of the ' + targetNeeded + ' cheapest locked upgrades with a known cost across all sub-trees. ');
+            html.push('<b>Est. time at current rate</b>: (cheapest ' + targetNeeded + ' cost − ' + formatNumber(respect) + ' respect already banked) ÷ respect-per-day rate. Shows "now" if you already have enough. ');
             html.push('Open <i>Show calculation</i> for the full level-by-level breakdown with cost sources marked.');
         } else {
             html.push('Fallback mode (faction tree call failed): showing only what unlocked-entry data can produce.');
@@ -1882,7 +1910,7 @@
         html.push('<button id="fbe-toggle-calc">' + (showCalc ? 'Hide calculation' : 'Show calculation') + '</button>');
         html.push('</div>');
         html.push('<div id="fbe-calc-breakdown" style="display:' + (showCalc ? 'block' : 'none') + '">');
-        html.push(buildCalcBreakdown(history, rateInfo, branchRows, targetNeeded, usedTree, treeSource));
+        html.push(buildCalcBreakdown(history, rateInfo, branchRows, targetNeeded, usedTree, treeSource, respect));
         html.push('</div>');
 
         resultsEl.innerHTML = html.join('');
